@@ -1,0 +1,248 @@
+{
+  "evaluation_date": "2025-06-27T17:39:42.489676",
+  "dataset": "MATH-500",
+  "total_problems": 500,
+  "correct": 349,
+  "overall_accuracy": 0.698,
+  "subject_performance": {
+    "Precalculus": {
+      "total": 56,
+      "correct": 22,
+      "accuracy": 0.39285714285714285,
+      "by_level": {
+        "2": {
+          "total": 13,
+          "correct": 9,
+          "accuracy": 0.6923076923076923
+        },
+        "4": {
+          "total": 13,
+          "correct": 4,
+          "accuracy": 0.3076923076923077
+        },
+        "1": {
+          "total": 3,
+          "correct": 2,
+          "accuracy": 0.6666666666666666
+        },
+        "5": {
+          "total": 12,
+          "correct": 3,
+          "accuracy": 0.25
+        },
+        "3": {
+          "total": 15,
+          "correct": 4,
+          "accuracy": 0.26666666666666666
+        }
+      }
+    },
+    "Intermediate Algebra": {
+      "total": 97,
+      "correct": 49,
+      "accuracy": 0.5051546391752577,
+      "by_level": {
+        "5": {
+          "total": 36,
+          "correct": 8,
+          "accuracy": 0.2222222222222222
+        },
+        "1": {
+          "total": 7,
+          "correct": 5,
+          "accuracy": 0.7142857142857143
+        },
+        "3": {
+          "total": 19,
+          "correct": 14,
+          "accuracy": 0.7368421052631579
+        },
+        "2": {
+          "total": 12,
+          "correct": 11,
+          "accuracy": 0.9166666666666666
+        },
+        "4": {
+          "total": 23,
+          "correct": 11,
+          "accuracy": 0.4782608695652174
+        }
+      }
+    },
+    "Algebra": {
+      "total": 124,
+      "correct": 103,
+      "accuracy": 0.8306451612903226,
+      "by_level": {
+        "3": {
+          "total": 26,
+          "correct": 23,
+          "accuracy": 0.8846153846153846
+        },
+        "2": {
+          "total": 21,
+          "correct": 20,
+          "accuracy": 0.9523809523809523
+        },
+        "5": {
+          "total": 30,
+          "correct": 19,
+          "accuracy": 0.6333333333333333
+        },
+        "4": {
+          "total": 30,
+          "correct": 24,
+          "accuracy": 0.8
+        },
+        "1": {
+          "total": 17,
+          "correct": 17,
+          "accuracy": 1.0
+        }
+      }
+    },
+    "Number Theory": {
+      "total": 62,
+      "correct": 51,
+      "accuracy": 0.8225806451612904,
+      "by_level": {
+        "3": {
+          "total": 16,
+          "correct": 13,
+          "accuracy": 0.8125
+        },
+        "5": {
+          "total": 12,
+          "correct": 8,
+          "accuracy": 0.6666666666666666
+        },
+        "2": {
+          "total": 10,
+          "correct": 10,
+          "accuracy": 1.0
+        },
+        "4": {
+          "total": 19,
+          "correct": 15,
+          "accuracy": 0.7894736842105263
+        },
+        "1": {
+          "total": 5,
+          "correct": 5,
+          "accuracy": 1.0
+        }
+      }
+    },
+    "Prealgebra": {
+      "total": 82,
+      "correct": 71,
+      "accuracy": 0.8658536585365854,
+      "by_level": {
+        "2": {
+          "total": 19,
+          "correct": 19,
+          "accuracy": 1.0
+        },
+        "5": {
+          "total": 19,
+          "correct": 13,
+          "accuracy": 0.6842105263157895
+        },
+        "4": {
+          "total": 20,
+          "correct": 17,
+          "accuracy": 0.85
+        },
+        "1": {
+          "total": 7,
+          "correct": 6,
+          "accuracy": 0.8571428571428571
+        },
+        "3": {
+          "total": 17,
+          "correct": 16,
+          "accuracy": 0.9411764705882353
+        }
+      }
+    },
+    "Geometry": {
+      "total": 41,
+      "correct": 27,
+      "accuracy": 0.6585365853658537,
+      "by_level": {
+        "2": {
+          "total": 8,
+          "correct": 7,
+          "accuracy": 0.875
+        },
+        "1": {
+          "total": 2,
+          "correct": 2,
+          "accuracy": 1.0
+        },
+        "3": {
+          "total": 8,
+          "correct": 7,
+          "accuracy": 0.875
+        },
+        "4": {
+          "total": 10,
+          "correct": 8,
+          "accuracy": 0.8
+        },
+        "5": {
+          "total": 13,
+          "correct": 3,
+          "accuracy": 0.23076923076923078
+        }
+      }
+    },
+    "Counting & Probability": {
+      "total": 38,
+      "correct": 26,
+      "accuracy": 0.6842105263157895,
+      "by_level": {
+        "5": {
+          "total": 12,
+          "correct": 5,
+          "accuracy": 0.4166666666666667
+        },
+        "2": {
+          "total": 7,
+          "correct": 7,
+          "accuracy": 1.0
+        },
+        "4": {
+          "total": 13,
+          "correct": 8,
+          "accuracy": 0.6153846153846154
+        },
+        "3": {
+          "total": 4,
+          "correct": 4,
+          "accuracy": 1.0
+        },
+        "1": {
+          "total": 2,
+          "correct": 2,
+          "accuracy": 1.0
+        }
+      }
+    }
+  },
+  "performance_metrics": {
+    "average_time_per_problem": 145.99775199413298,
+    "average_reasoning_steps": 1.976,
+    "average_iterations": 20.468,
+    "total_time_minutes": 1216.6479332844417
+  },
+  "model_config": {
+    "model_name": "gpt-4o-mini",
+    "temperature": 0.7,
+    "max_iterations": 50,
+    "exploration_constant": 1.414,
+    "max_depth": 15,
+    "parallel_expansions": 3,
+    "max_workers": 3
+  }
+}
