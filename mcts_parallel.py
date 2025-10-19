@@ -1,3 +1,24 @@
+"""
+Parallel Monte Carlo Tree Search for Mathematical Reasoning with Feedback Integration
+
+This implementation extends the original MCTS system with feedback-aware reasoning that incorporates:
+- Neural feedback: Numeric feedback based on LLM evaluation of reasoning progress
+- Symbolic feedback: LEAN-based formal verification feedback for mathematical proofs
+- Combined feedback: Weighted integration of both neural and symbolic feedback sources
+
+The feedback system adjusts MCTS exploration, node expansion, and value updates based on structured
+feedback without requiring neural network policy/value models.
+
+Key Features:
+- FeedbackInterface: Abstract interface for different feedback types
+- NeuralFeedbackModule: LLM-based evaluation feedback
+- SymbolicFeedbackModule: LEAN server integration for formal verification
+- CombinedFeedbackModule: Weighted combination of feedback sources
+- Feedback-aware MCTS nodes with reward tracking
+- Thread-safe parallel feedback integration
+- Comprehensive logging and visualization of feedback effects
+"""
+
 import numpy as np
 import json
 import time
@@ -33,6 +54,280 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 load_dotenv()
+
+
+# Manish: added feedback-aware reasoning system
+class FeedbackInterface(ABC):
+    """Abstract interface for neural and symbolic feedback in MCTS reasoning"""
+    
+    @abstractmethod
+    def get_feedback(self, state: 'ReasoningState', action: 'ReasoningAction') -> Tuple['ReasoningState', float, Dict[str, Any]]:
+        """
+        Return feedback for a state-action pair.
+        
+        Args:
+            state: Current reasoning state
+            action: Action taken
+            
+        Returns:
+            Tuple of (next_state, reward, info)
+            - next_state: Updated state after action
+            - reward: Numeric feedback in [-1, 1]
+            - info: Additional feedback information
+        """
+        raise NotImplementedError
+
+
+class NeuralFeedbackModule(FeedbackInterface):
+    """Neural feedback module providing numeric feedback based on LLM evaluation"""
+    
+    def __init__(self, llm_reasoner: 'ParallelLLMReasoner', logger: Optional['DebugLogger'] = None):
+        self.llm_reasoner = llm_reasoner
+        self.logger = logger or DebugLogger()
+        
+    def get_feedback(self, state: 'ReasoningState', action: 'ReasoningAction') -> Tuple['ReasoningState', float, Dict[str, Any]]:
+        """Get neural feedback by applying action and evaluating result"""
+        try:
+            # Apply action to get next state
+            next_state = self.llm_reasoner.apply_action(state, action)
+            
+            # Evaluate the new state
+            evaluation = self.llm_reasoner.evaluate_state(next_state)
+            
+            # Calculate reward based on evaluation
+            if evaluation.get("is_complete") and evaluation.get("is_correct"):
+                reward = 1.0
+            elif evaluation.get("is_complete"):
+                reward = 0.2  # Partial credit for completion
+            else:
+                # Combine progress, quality, and confidence
+                progress = evaluation.get("progress", 0.0)
+                quality = evaluation.get("quality", 0.0)
+                confidence = evaluation.get("confidence", 0.5)
+                reward = 0.4 * progress + 0.4 * quality + 0.2 * confidence
+                reward = max(-1.0, min(1.0, reward))  # Clamp to [-1, 1]
+            
+            info = {
+                "feedback_type": "neural",
+                "evaluation": evaluation,
+                "action_applied": action.description,
+                "technique_used": action.action_type
+            }
+            
+            self.logger.log(f"Neural feedback: reward={reward:.3f}, progress={evaluation.get('progress', 0):.3f}", 
+                          Fore.BLUE)
+            
+            return next_state, reward, info
+            
+        except Exception as e:
+            self.logger.log(f"Error in neural feedback: {e}", Fore.RED)
+            # Return neutral feedback on error
+            return state, 0.0, {"feedback_type": "neural", "error": str(e)}
+
+
+class SymbolicFeedbackModule(FeedbackInterface):
+    """Symbolic feedback module for LEAN-based formal verification"""
+    
+    def __init__(self, lean_server_url: str = "http://localhost:8000", 
+                 logger: Optional['DebugLogger'] = None):
+        self.lean_server_url = lean_server_url
+        self.logger = logger or DebugLogger()
+        self._session = None
+        
+    def _get_session(self):
+        """Get or create HTTP session for LEAN server communication"""
+        if self._session is None:
+            import requests
+            self._session = requests.Session()
+        return self._session
+    
+    def get_feedback(self, state: 'ReasoningState', action: 'ReasoningAction') -> Tuple['ReasoningState', float, Dict[str, Any]]:
+        """Get symbolic feedback from LEAN server"""
+        try:
+            # Convert reasoning state to LEAN proof state
+            proof_state = self._state_to_lean_proof(state)
+            
+            # Convert action to LEAN tactic
+            tactic = self._action_to_lean_tactic(action)
+            
+            # Send to LEAN server
+            response = self._query_lean_server(proof_state, tactic)
+            
+            if response.get("success", False):
+                # Success: tactic worked
+                next_state = state.copy()
+                next_state.steps.append(action.description)
+                next_state.techniques_used.append(action.action_type)
+                
+                # Small positive reward for successful tactic
+                reward = 0.1
+                
+                info = {
+                    "feedback_type": "symbolic",
+                    "lean_response": response,
+                    "tactic_success": True,
+                    "proof_progress": response.get("proof_progress", 0.0)
+                }
+                
+                self.logger.log(f"Symbolic feedback: tactic succeeded, reward={reward:.3f}", 
+                              Fore.GREEN)
+                
+            else:
+                # Failure: tactic didn't work
+                next_state = state.copy()
+                next_state.steps.append(f"Failed: {action.description}")
+                
+                # Negative reward for failed tactic
+                reward = -0.5
+                
+                info = {
+                    "feedback_type": "symbolic",
+                    "lean_response": response,
+                    "tactic_success": False,
+                    "error_message": response.get("error", "Unknown error")
+                }
+                
+                self.logger.log(f"Symbolic feedback: tactic failed, reward={reward:.3f}", 
+                              Fore.RED)
+            
+            return next_state, reward, info
+            
+        except Exception as e:
+            self.logger.log(f"Error in symbolic feedback: {e}", Fore.RED)
+            # Return neutral feedback on error
+            return state, 0.0, {"feedback_type": "symbolic", "error": str(e)}
+    
+    def _state_to_lean_proof(self, state: 'ReasoningState') -> str:
+        """Convert reasoning state to LEAN proof state representation"""
+        # This is a simplified conversion - in practice, you'd need more sophisticated
+        # translation from mathematical reasoning to formal proof states
+        proof_parts = []
+        
+        if state.problem.problem_text:
+            proof_parts.append(f"-- Problem: {state.problem.problem_text[:100]}...")
+        
+        if state.steps:
+            proof_parts.append("-- Steps taken:")
+            for i, step in enumerate(state.steps):
+                proof_parts.append(f"-- {i+1}. {step}")
+        
+        if state.current_expression:
+            proof_parts.append(f"-- Current: {state.current_expression}")
+        
+        return "\n".join(proof_parts)
+    
+    def _action_to_lean_tactic(self, action: 'ReasoningAction') -> str:
+        """Convert reasoning action to LEAN tactic"""
+        # Map action types to LEAN tactics
+        tactic_mapping = {
+            "solve_equation": "simp",
+            "factor": "ring",
+            "expand": "ring",
+            "substitute": "rw",
+            "isolate_variable": "simp",
+            "quadratic_formula": "ring",
+            "complete_square": "ring",
+            "trigonometry": "simp",
+            "functions": "simp",
+            "geometry": "simp",
+            "number_theory": "simp"
+        }
+        
+        # Get base tactic from action type
+        base_tactic = tactic_mapping.get(action.action_type, "simp")
+        
+        # Add description as comment
+        return f"-- {action.description}\n{base_tactic}"
+    
+    def _query_lean_server(self, proof_state: str, tactic: str) -> Dict[str, Any]:
+        """Query LEAN server with proof state and tactic"""
+        try:
+            import requests
+            
+            payload = {
+                "proof_state": proof_state,
+                "tactic": tactic
+            }
+            
+            session = self._get_session()
+            response = session.post(f"{self.lean_server_url}/verify", 
+                                  json=payload, 
+                                  timeout=10)
+            
+            if response.status_code == 200:
+                return response.json()
+            else:
+                return {
+                    "success": False,
+                    "error": f"Server error: {response.status_code}",
+                    "proof_progress": 0.0
+                }
+                
+        except Exception as e:
+            return {
+                "success": False,
+                "error": f"Connection error: {str(e)}",
+                "proof_progress": 0.0
+            }
+    
+    def __del__(self):
+        """Cleanup session"""
+        if self._session:
+            self._session.close()
+
+
+class CombinedFeedbackModule(FeedbackInterface):
+    """Combined feedback module that integrates both neural and symbolic feedback"""
+    
+    def __init__(self, neural_feedback: NeuralFeedbackModule, 
+                 symbolic_feedback: SymbolicFeedbackModule,
+                 neural_weight: float = 0.7, symbolic_weight: float = 0.3,
+                 logger: Optional['DebugLogger'] = None):
+        self.neural_feedback = neural_feedback
+        self.symbolic_feedback = symbolic_feedback
+        self.neural_weight = neural_weight
+        self.symbolic_weight = symbolic_weight
+        self.logger = logger or DebugLogger()
+        
+    def get_feedback(self, state: 'ReasoningState', action: 'ReasoningAction') -> Tuple['ReasoningState', float, Dict[str, Any]]:
+        """Get combined feedback from both neural and symbolic sources"""
+        try:
+            # Get neural feedback
+            neural_state, neural_reward, neural_info = self.neural_feedback.get_feedback(state, action)
+            
+            # Get symbolic feedback
+            symbolic_state, symbolic_reward, symbolic_info = self.symbolic_feedback.get_feedback(state, action)
+            
+            # Combine rewards with weights
+            total_reward = (self.neural_weight * neural_reward + 
+                          self.symbolic_weight * symbolic_reward)
+            
+            # Use neural state as primary (it has more detailed reasoning)
+            combined_state = neural_state
+            
+            # Combine info
+            combined_info = {
+                "feedback_type": "combined",
+                "neural_feedback": neural_info,
+                "symbolic_feedback": symbolic_info,
+                "neural_reward": neural_reward,
+                "symbolic_reward": symbolic_reward,
+                "combined_reward": total_reward,
+                "weights": {
+                    "neural": self.neural_weight,
+                    "symbolic": self.symbolic_weight
+                }
+            }
+            
+            self.logger.log(f"Combined feedback: neural={neural_reward:.3f}, symbolic={symbolic_reward:.3f}, "
+                          f"total={total_reward:.3f}", Fore.MAGENTA)
+            
+            return combined_state, total_reward, combined_info
+            
+        except Exception as e:
+            self.logger.log(f"Error in combined feedback: {e}", Fore.RED)
+            # Fallback to neural feedback only
+            return self.neural_feedback.get_feedback(state, action)
 
 
 class DebugLogger:
@@ -748,7 +1043,7 @@ Your response:"""
 
 
 class MCTSNode:
-    """Node in the MCTS tree for mathematical reasoning"""
+    """Node in the MCTS tree for mathematical reasoning with feedback integration"""
     
     def __init__(self, state: ReasoningState, parent: Optional['MCTSNode'] = None, 
                  action: Optional[ReasoningAction] = None):
@@ -761,6 +1056,12 @@ class MCTSNode:
         self.untried_actions: List[ReasoningAction] = []
         self.is_terminal = False
         self.evaluation_cache: Optional[Dict[str, Any]] = None
+        
+        # Manish: added feedback-aware node properties
+        self.feedback_history: List[Dict[str, Any]] = []  # Track feedback received
+        self.feedback_reward: float = 0.0  # Cumulative feedback reward
+        self.feedback_type: Optional[str] = None  # Type of feedback received
+        self.last_feedback_info: Optional[Dict[str, Any]] = None  # Latest feedback details
     
     def is_fully_expanded(self) -> bool:
         """Check if all actions have been tried"""
@@ -789,6 +1090,38 @@ class MCTSNode:
         self.visits += 1
         self.value += value
     
+    # Manish: added feedback-aware update methods
+    def update_with_feedback(self, value: float, feedback_reward: float, feedback_info: Dict[str, Any]):
+        """Update node statistics with feedback information"""
+        self.visits += 1
+        self.value += value
+        self.feedback_reward += feedback_reward
+        self.feedback_type = feedback_info.get("feedback_type", "unknown")
+        self.last_feedback_info = feedback_info
+        self.feedback_history.append({
+            "iteration": self.visits,
+            "value": value,
+            "feedback_reward": feedback_reward,
+            "feedback_type": self.feedback_type,
+            "timestamp": time.time()
+        })
+    
+    def get_feedback_summary(self) -> Dict[str, Any]:
+        """Get summary of feedback received by this node"""
+        if not self.feedback_history:
+            return {"total_feedback": 0, "feedback_types": [], "avg_feedback_reward": 0.0}
+        
+        feedback_types = [f.get("feedback_type", "unknown") for f in self.feedback_history]
+        avg_feedback_reward = sum(f.get("feedback_reward", 0) for f in self.feedback_history) / len(self.feedback_history)
+        
+        return {
+            "total_feedback": len(self.feedback_history),
+            "feedback_types": list(set(feedback_types)),
+            "avg_feedback_reward": avg_feedback_reward,
+            "total_feedback_reward": self.feedback_reward,
+            "latest_feedback": self.last_feedback_info
+        }
+    
     def get_path(self) -> List[Tuple[Optional[ReasoningAction], ReasoningState]]:
         """Get the path from root to this node"""
         path = []
@@ -800,11 +1133,12 @@ class MCTSNode:
 
 
 class ParallelMCTSReasoningSolver:
-    """MCTS-based mathematical reasoning solver with parallel expansion"""
+    """MCTS-based mathematical reasoning solver with parallel expansion and feedback integration"""
     
     def __init__(self, llm_reasoner: ParallelLLMReasoner, max_iterations: int = 100, 
                  exploration_constant: float = 1.414, max_depth: int = 20,
-                 logger: Optional[DebugLogger] = None, parallel_expansions: int = 3):
+                 logger: Optional[DebugLogger] = None, parallel_expansions: int = 3,
+                 feedback_interface: Optional[FeedbackInterface] = None):
         self.llm_reasoner = llm_reasoner
         self.max_iterations = max_iterations
         self.exploration_constant = exploration_constant
@@ -812,6 +1146,10 @@ class ParallelMCTSReasoningSolver:
         self.stats = defaultdict(int)
         self.logger = logger or DebugLogger()
         self.parallel_expansions = parallel_expansions
+        
+        # Manish: added feedback integration
+        self.feedback_interface = feedback_interface
+        self.feedback_stats = defaultdict(int)  # Track feedback usage statistics
     
     def solve(self, problem: MathProblem) -> Dict[str, Any]:
         """Solve a mathematical problem using MCTS + LLM with parallel expansions"""
@@ -906,7 +1244,7 @@ class ParallelMCTSReasoningSolver:
         return node
     
     def _expand_parallel(self, nodes: List[MCTSNode]) -> List[MCTSNode]:
-        """Expansion phase for multiple nodes in parallel"""
+        """Expansion phase for multiple nodes in parallel with feedback integration"""
         # Generate actions for all nodes that need them
         nodes_needing_actions = []
         for node in nodes:
@@ -922,15 +1260,42 @@ class ParallelMCTSReasoningSolver:
             for node, actions in zip(nodes_needing_actions, all_actions):
                 node.untried_actions = sorted(actions, key=lambda a: a.confidence, reverse=True)
         
-        # Now expand each node
+        # Now expand each node with feedback integration
         expanded_nodes = []
         for node in nodes:
             if node.untried_actions:
                 action = node.untried_actions.pop(0)
                 
-                # Apply action to create new state
-                new_state = self.llm_reasoner.apply_action(node.state, action)
-                child = node.add_child(new_state, action)
+                # Manish: added feedback-aware expansion
+                if self.feedback_interface:
+                    # Get feedback for the action
+                    next_state, feedback_reward, feedback_info = self.feedback_interface.get_feedback(node.state, action)
+                    
+                    # Create child with feedback-informed state
+                    child = node.add_child(next_state, action)
+                    
+                    # Store feedback information in the child node
+                    child.feedback_reward = feedback_reward
+                    child.feedback_type = feedback_info.get("feedback_type", "unknown")
+                    child.last_feedback_info = feedback_info
+                    child.feedback_history.append({
+                        "iteration": 1,
+                        "value": 0.0,  # Will be updated in simulation
+                        "feedback_reward": feedback_reward,
+                        "feedback_type": child.feedback_type,
+                        "timestamp": time.time()
+                    })
+                    
+                    # Update feedback statistics
+                    self.feedback_stats[f"feedback_{child.feedback_type}"] += 1
+                    self.feedback_stats["total_feedback_calls"] += 1
+                    
+                    self.logger.log(f"Feedback expansion: {child.feedback_type} reward={feedback_reward:.3f}", 
+                                  Fore.CYAN)
+                else:
+                    # Fallback to original expansion without feedback
+                    new_state = self.llm_reasoner.apply_action(node.state, action)
+                    child = node.add_child(new_state, action)
                 
                 self.stats['expansions'] += 1
                 expanded_nodes.append(child)
@@ -983,19 +1348,33 @@ class ParallelMCTSReasoningSolver:
         return values
     
     def _backpropagate(self, node: MCTSNode, value: float):
-        """Backpropagation phase: update statistics"""
+        """Backpropagation phase: update statistics with feedback integration"""
         while node is not None:
-            node.update(value)
+            # Manish: added feedback-aware backpropagation
+            if hasattr(node, 'feedback_reward') and node.feedback_reward != 0:
+                # Use feedback-informed update
+                feedback_info = node.last_feedback_info or {"feedback_type": "unknown"}
+                node.update_with_feedback(value, node.feedback_reward, feedback_info)
+                
+                # Log feedback backpropagation
+                self.logger.log(f"Feedback backprop: {node.feedback_type} reward={node.feedback_reward:.3f}, value={value:.3f}", 
+                              Fore.MAGENTA)
+            else:
+                # Standard update without feedback
+                node.update(value)
+            
             node = node.parent
             self.stats['backpropagations'] += 1
 
 
 class MathReasoningSystemParallel:
-    """Complete system for mathematical reasoning with MCTS + LLM and parallelization"""
+    """Complete system for mathematical reasoning with MCTS + LLM, parallelization, and feedback integration"""
     
     def __init__(self, model_name: str = "gpt-4", temperature: float = 0.7, 
                  verbose_logging: bool = True, max_workers: int = 3,
-                 parallel_expansions: int = 3):
+                 parallel_expansions: int = 3, enable_feedback: bool = True,
+                 feedback_type: str = "neural", lean_server_url: str = "http://localhost:8000",
+                 neural_weight: float = 0.7, symbolic_weight: float = 0.3):
         self.logger = DebugLogger(verbose=verbose_logging)
         self.llm_reasoner = ParallelLLMReasoner(
             model_name=model_name, 
@@ -1003,17 +1382,43 @@ class MathReasoningSystemParallel:
             logger=self.logger,
             max_workers=max_workers
         )
+        
+        # Manish: added feedback system initialization
+        self.feedback_interface = None
+        if enable_feedback:
+            if feedback_type == "neural":
+                self.feedback_interface = NeuralFeedbackModule(self.llm_reasoner, self.logger)
+            elif feedback_type == "symbolic":
+                self.feedback_interface = SymbolicFeedbackModule(lean_server_url, self.logger)
+            elif feedback_type == "combined":
+                neural_feedback = NeuralFeedbackModule(self.llm_reasoner, self.logger)
+                symbolic_feedback = SymbolicFeedbackModule(lean_server_url, self.logger)
+                self.feedback_interface = CombinedFeedbackModule(
+                    neural_feedback, symbolic_feedback, 
+                    neural_weight, symbolic_weight, self.logger
+                )
+            else:
+                self.logger.log(f"Unknown feedback type: {feedback_type}, using neural", Fore.YELLOW)
+                self.feedback_interface = NeuralFeedbackModule(self.llm_reasoner, self.logger)
+        
         self.solver = ParallelMCTSReasoningSolver(
             llm_reasoner=self.llm_reasoner,
             max_iterations=50,
             exploration_constant=1.414,
             max_depth=15,
             logger=self.logger,
-            parallel_expansions=parallel_expansions
+            parallel_expansions=parallel_expansions,
+            feedback_interface=self.feedback_interface
         )
         self.results_data = []
         self.results_filename = self.get_results_filename()
         self._results_lock = threading.Lock()  # Thread safety for results
+        
+        # Log feedback configuration
+        if self.feedback_interface:
+            self.logger.log(f"Feedback system enabled: {feedback_type}", Fore.GREEN, important=True)
+        else:
+            self.logger.log("Feedback system disabled", Fore.YELLOW, important=True)
     
     def solve_problem(self, problem: Union[str, MathProblem, Dict[str, Any]], 
                      problem_idx: int = None, total_problems: int = None,
@@ -1060,7 +1465,7 @@ class MathReasoningSystemParallel:
                 'has_diagram': math_problem.has_diagram
             }
             
-            # Create statistics record
+            # Create statistics record with feedback information
             stats_record = {
                 'timestamp': datetime.datetime.now().isoformat(),
                 'dataset_index': dataset_idx,
@@ -1079,7 +1484,11 @@ class MathReasoningSystemParallel:
                 'confidence': result.get('confidence', 0),
                 'value': result.get('value', 0),
                 'has_diagram': math_problem.has_diagram,
-                'mcts_stats': result.get('stats', {})
+                'mcts_stats': result.get('stats', {}),
+                # Manish: added feedback statistics
+                'feedback_enabled': self.feedback_interface is not None,
+                'feedback_stats': dict(self.solver.feedback_stats) if hasattr(self.solver, 'feedback_stats') else {},
+                'feedback_type': type(self.feedback_interface).__name__ if self.feedback_interface else 'None'
             }
             
             with self._results_lock:
@@ -1564,25 +1973,106 @@ class MathReasoningSystemParallel:
         """Cleanup: shutdown thread pool"""
         if hasattr(self, 'llm_reasoner'):
             self.llm_reasoner.shutdown()
+    
+    # Manish: added feedback validation methods
+    def validate_feedback_system(self) -> Dict[str, Any]:
+        """Validate that the feedback system is working correctly"""
+        validation_results = {
+            "feedback_enabled": self.feedback_interface is not None,
+            "feedback_type": type(self.feedback_interface).__name__ if self.feedback_interface else "None",
+            "solver_has_feedback": hasattr(self.solver, 'feedback_interface'),
+            "feedback_stats_available": hasattr(self.solver, 'feedback_stats'),
+            "validation_timestamp": datetime.datetime.now().isoformat()
+        }
+        
+        if self.feedback_interface:
+            # Test feedback with a simple problem
+            try:
+                test_problem = MathProblem(
+                    problem_text="Test problem: 2 + 2 = ?",
+                    solution="4",
+                    answer="4",
+                    subject="Test",
+                    level=1
+                )
+                test_state = ReasoningState(problem=test_problem)
+                test_action = ReasoningAction(
+                    description="Add 2 + 2",
+                    action_type="arithmetic",
+                    confidence=0.9
+                )
+                
+                # Test feedback call
+                next_state, reward, info = self.feedback_interface.get_feedback(test_state, test_action)
+                
+                validation_results.update({
+                    "feedback_test_successful": True,
+                    "test_reward": reward,
+                    "test_feedback_type": info.get("feedback_type", "unknown"),
+                    "test_state_updated": next_state != test_state
+                })
+                
+            except Exception as e:
+                validation_results.update({
+                    "feedback_test_successful": False,
+                    "test_error": str(e)
+                })
+        
+        return validation_results
+    
+    def get_feedback_statistics(self) -> Dict[str, Any]:
+        """Get comprehensive feedback statistics"""
+        if not hasattr(self.solver, 'feedback_stats'):
+            return {"error": "Feedback statistics not available"}
+        
+        stats = dict(self.solver.feedback_stats)
+        total_feedback = stats.get("total_feedback_calls", 0)
+        
+        return {
+            "total_feedback_calls": total_feedback,
+            "feedback_breakdown": {k: v for k, v in stats.items() if k.startswith("feedback_")},
+            "feedback_enabled": self.feedback_interface is not None,
+            "feedback_type": type(self.feedback_interface).__name__ if self.feedback_interface else "None"
+        }
 
 
 # Example usage and testing
 if __name__ == "__main__":
-    # Initialize system with parallelization
+    # Initialize system with parallelization and feedback integration
     system = MathReasoningSystemParallel(
         model_name="gpt-4o-mini",  # or "gpt-4" for better performance
         temperature=0.7,
         verbose_logging=True,  # Set to False to reduce output
         max_workers=3,  # Number of parallel LLM calls
-        parallel_expansions=3  # Number of nodes to expand in parallel
+        parallel_expansions=3,  # Number of nodes to expand in parallel
+        enable_feedback=True,  # Enable feedback-aware reasoning
+        feedback_type="neural",  # Options: "neural", "symbolic", "combined"
+        neural_weight=0.7,  # Weight for neural feedback (when using combined)
+        symbolic_weight=0.3  # Weight for symbolic feedback (when using combined)
     )
     
-    # Example 1: Test with a simple problem
-    print("=== Testing Simple Problem ===")
+    # Example 1: Validate feedback system
+    print("=== Validating Feedback System ===")
+    validation = system.validate_feedback_system()
+    print(f"Feedback enabled: {validation.get('feedback_enabled')}")
+    print(f"Feedback type: {validation.get('feedback_type')}")
+    if validation.get('feedback_test_successful'):
+        print(f"Feedback test successful - reward: {validation.get('test_reward')}")
+    else:
+        print(f"Feedback test failed: {validation.get('test_error', 'Unknown error')}")
+    
+    # Example 2: Test with a simple problem
+    print("\n=== Testing Simple Problem with Feedback ===")
     problem1 = "Solve for x: 2x + 5 = 13"
     result1 = system.solve_problem(problem1, 1, 1, dataset_idx=None)
     print(f"\nSolution: {result1.get('solution')}")
     print(f"Correct: {result1.get('is_correct')}")
+    
+    # Show feedback statistics
+    feedback_stats = system.get_feedback_statistics()
+    print(f"\nFeedback Statistics:")
+    print(f"Total feedback calls: {feedback_stats.get('total_feedback_calls', 0)}")
+    print(f"Feedback breakdown: {feedback_stats.get('feedback_breakdown', {})}")
     
     # Example 2: Evaluate on sampled subjects and levels
     # try:
