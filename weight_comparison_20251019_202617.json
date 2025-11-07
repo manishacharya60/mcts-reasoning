@@ -1,0 +1,48 @@
+{
+  "experiment_info": {
+    "timestamp": "20251019_202617",
+    "total_tests": 1,
+    "experiment_type": "simple_weight_testing"
+  },
+  "results": [
+    {
+      "test_name": "All LEAN",
+      "neural_weight": 0.0,
+      "symbolic_weight": 1.0,
+      "accuracy": 0.6,
+      "correct": 21,
+      "total": 35,
+      "time_taken": 5080.753863334656,
+      "feedback_calls": 705,
+      "timestamp": "2025-10-19T20:26:17.539162"
+    }
+  ],
+  "best_configuration": {
+    "test_name": "All LEAN",
+    "neural_weight": 0.0,
+    "symbolic_weight": 1.0,
+    "accuracy": 0.6,
+    "correct": 21,
+    "total": 35,
+    "time_taken": 5080.753863334656,
+    "feedback_calls": 705,
+    "timestamp": "2025-10-19T20:26:17.539162"
+  },
+  "analysis": {
+    "sorted_by_accuracy": [
+      {
+        "test_name": "All LEAN",
+        "neural_weight": 0.0,
+        "symbolic_weight": 1.0,
+        "accuracy": 0.6,
+        "correct": 21,
+        "total": 35,
+        "time_taken": 5080.753863334656,
+        "feedback_calls": 705,
+        "timestamp": "2025-10-19T20:26:17.539162"
+      }
+    ],
+    "best_accuracy": 0.6,
+    "best_weights": "0.0/1.0"
+  }
+}

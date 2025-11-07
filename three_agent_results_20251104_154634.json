@@ -1,0 +1,23 @@
+{
+  "evaluation_date": "2025-11-04T15:46:34.681327",
+  "total_problems": 35,
+  "correct": 23,
+  "accuracy": 65.71428571428571,
+  "model_config": {
+    "model_name": "gpt-4o-mini",
+    "temperature": 0.7,
+    "max_iterations": 50,
+    "exploration_constant": 1.414,
+    "max_depth": 15,
+    "parallel_expansions": 2,
+    "max_workers": 2,
+    "feedback_type": "three_agent"
+  },
+  "problems": [
+    {
+      "solution": null,
+      "is_correct": false,
+      "reasoning_path": [
+        [
+          "Initial state",
+          

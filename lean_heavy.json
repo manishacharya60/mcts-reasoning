@@ -1,0 +1,12 @@
+{
+  "test_name": "LEAN Heavy",
+  "neural_weight": 0.3,
+  "symbolic_weight": 0.7,
+  "accuracy": 0.8,
+  "correct": 28,
+  "total": 35,
+  "time_taken": 3911.334004878998,
+  "feedback_calls": 559,
+  "results_file": "fixed_problems_evaluation_20251019_183833.json",
+  "timestamp": "2025-10-19T18:38:33.955093"
+}

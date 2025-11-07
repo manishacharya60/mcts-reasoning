@@ -276,6 +276,365 @@ class SymbolicFeedbackModule(FeedbackInterface):
             self._session.close()
 
 
+# Manish: Three-Agent System for LEAN Integration
+class LEANGeneratorAgent:
+    """Agent that generates LEAN proof sketches/subgoals using LLM"""
+    
+    def __init__(self, llm_reasoner: 'ParallelLLMReasoner', logger: Optional['DebugLogger'] = None):
+        self.llm_reasoner = llm_reasoner
+        self.logger = logger or DebugLogger()
+        
+        # Prompt for generating LEAN proof sketches
+        self.lean_generation_prompt = PromptTemplate(
+            input_variables=["state", "action"],
+            template="""You are a LEAN 4 theorem prover expert. Given a mathematical reasoning step, generate a LEAN 4 proof sketch or subgoal that represents this step.
+
+Current State:
+{state}
+
+Reasoning Action:
+{action}
+
+Generate a LEAN 4 proof sketch that:
+1. Represents the mathematical reasoning step as a formal proof subgoal
+2. Uses appropriate LEAN tactics for the step
+3. Is syntactically correct LEAN code
+4. Can be verified by LEAN
+
+Return your response as JSON with:
+- "lean_code": The LEAN proof sketch/code
+- "proof_sketch": A natural language description of the proof step
+- "subgoal_description": What this subgoal aims to prove
+- "tactics_used": List of LEAN tactics that would be used
+
+Format:
+{{
+    "lean_code": "theorem step_name : ... := by ...",
+    "proof_sketch": "description",
+    "subgoal_description": "what this proves",
+    "tactics_used": ["tactic1", "tactic2"]
+}}
+"""
+        )
+    
+    def generate_lean_subgoal(self, state: 'ReasoningState', action: 'ReasoningAction') -> Dict[str, Any]:
+        """Generate LEAN proof sketch/subgoal for the given state and action"""
+        try:
+            prompt_input = self.lean_generation_prompt.format(
+                state=state.to_string(),
+                action=f"{action.action_type}: {action.description}"
+            )
+            
+            response = self.llm_reasoner.llm.invoke(prompt_input)
+            content = response.content
+            
+            # Parse JSON response
+            try:
+                # Extract JSON from response
+                start_idx = content.find('{')
+                end_idx = content.rfind('}')
+                if start_idx != -1 and end_idx != -1:
+                    json_str = content[start_idx:end_idx+1]
+                    result = json.loads(json_str)
+                    
+                    self.logger.log(f"LEAN Generator: Generated subgoal '{result.get('subgoal_description', 'unknown')}'", 
+                                  Fore.CYAN)
+                    return result
+            except json.JSONDecodeError:
+                self.logger.log(f"LEAN Generator: Failed to parse JSON, using fallback", Fore.YELLOW)
+            
+            # Fallback: create basic LEAN code
+            return {
+                "lean_code": f"-- {action.description}\ntheorem step_{len(state.steps)} : ... := by simp",
+                "proof_sketch": action.description,
+                "subgoal_description": f"Prove: {action.description}",
+                "tactics_used": ["simp"]
+            }
+            
+        except Exception as e:
+            self.logger.log(f"Error in LEAN Generator: {e}", Fore.RED)
+            return {
+                "lean_code": "",
+                "proof_sketch": action.description,
+                "subgoal_description": f"Prove: {action.description}",
+                "tactics_used": [],
+                "error": str(e)
+            }
+
+
+class ProofValidatorAgent:
+    """Agent that validates LEAN proof subgoals using LEAN server"""
+    
+    def __init__(self, lean_server_url: str = "http://localhost:8000", 
+                 logger: Optional['DebugLogger'] = None):
+        self.lean_server_url = lean_server_url
+        self.logger = logger or DebugLogger()
+        self._session = None
+    
+    def _get_session(self):
+        """Get or create HTTP session"""
+        if self._session is None:
+            import requests
+            self._session = requests.Session()
+        return self._session
+    
+    def validate_lean_subgoal(self, lean_code: str, proof_state: str = "") -> Dict[str, Any]:
+        """Validate a LEAN subgoal by sending it to LEAN server"""
+        try:
+            import requests
+            
+            payload = {
+                "proof_state": proof_state,
+                "tactic": lean_code,
+                "subgoal_mode": True  # Indicate this is a subgoal validation
+            }
+            
+            session = self._get_session()
+            response = session.post(
+                f"{self.lean_server_url}/verify",
+                json=payload,
+                timeout=15
+            )
+            
+            if response.status_code == 200:
+                result = response.json()
+                
+                if result.get("success", False):
+                    self.logger.log(f"Proof Validator: Subgoal validated successfully", Fore.GREEN)
+                else:
+                    self.logger.log(f"Proof Validator: Subgoal validation failed", Fore.RED)
+                
+                return result
+            else:
+                return {
+                    "success": False,
+                    "error": f"Server error: {response.status_code}",
+                    "proof_progress": 0.0
+                }
+                
+        except Exception as e:
+            self.logger.log(f"Error in Proof Validator: {e}", Fore.RED)
+            return {
+                "success": False,
+                "error": f"Validation error: {str(e)}",
+                "proof_progress": 0.0
+            }
+    
+    def __del__(self):
+        """Cleanup session"""
+        if self._session:
+            self._session.close()
+
+
+class ReflectorAgent:
+    """Agent that reflects on generator and validator outputs to produce numerical signal"""
+    
+    def __init__(self, llm_reasoner: 'ParallelLLMReasoner', 
+                 validator: ProofValidatorAgent,
+                 logger: Optional['DebugLogger'] = None):
+        self.llm_reasoner = llm_reasoner
+        self.validator = validator
+        self.logger = logger or DebugLogger()
+        
+        # Prompt for reflection
+        self.reflection_prompt = PromptTemplate(
+            input_variables=["state", "action", "generator_output", "validator_output"],
+            template="""You are a mathematical reasoning reflection agent. Analyze the generator's LEAN proof sketch and the validator's verification results to assess the quality and correctness of the reasoning step.
+
+Current State:
+{state}
+
+Reasoning Action:
+{action}
+
+Generator Output (LEAN Proof Sketch):
+{generator_output}
+
+Validator Output (LEAN Verification):
+{validator_output}
+
+Reflect on:
+1. How well does the generator's proof sketch match the intended reasoning step?
+2. What does the validator's result tell us about the correctness?
+3. Is the proof sketch syntactically and semantically correct?
+4. What is the overall quality of this step?
+
+Return a JSON response with:
+- "reflection": Detailed reflection on the step
+- "quality_score": Numerical score 0.0-1.0 for overall quality
+- "correctness_score": Numerical score 0.0-1.0 for correctness
+- "progress_score": Numerical score 0.0-1.0 for progress made
+- "numerical_signal": Combined numerical signal [-1.0, 1.0] for MCTS value update
+- "recommendation": Whether to continue, prune, or explore this path
+
+Format:
+{{
+    "reflection": "detailed analysis",
+    "quality_score": 0.8,
+    "correctness_score": 0.9,
+    "progress_score": 0.7,
+    "numerical_signal": 0.8,
+    "recommendation": "continue"
+}}
+"""
+        )
+    
+    def reflect(self, state: 'ReasoningState', action: 'ReasoningAction',
+                generator_output: Dict[str, Any], validator_output: Dict[str, Any]) -> Dict[str, Any]:
+        """Reflect on generator and validator outputs to produce numerical signal"""
+        try:
+            prompt_input = self.reflection_prompt.format(
+                state=state.to_string(),
+                action=f"{action.action_type}: {action.description}",
+                generator_output=json.dumps(generator_output, indent=2),
+                validator_output=json.dumps(validator_output, indent=2)
+            )
+            
+            response = self.llm_reasoner.llm.invoke(prompt_input)
+            content = response.content
+            
+            # Parse JSON response
+            try:
+                start_idx = content.find('{')
+                end_idx = content.rfind('}')
+                if start_idx != -1 and end_idx != -1:
+                    json_str = content[start_idx:end_idx+1]
+                    result = json.loads(json_str)
+                    
+                    # Ensure numerical_signal is in valid range
+                    numerical_signal = result.get("numerical_signal", 0.0)
+                    numerical_signal = max(-1.0, min(1.0, float(numerical_signal)))
+                    result["numerical_signal"] = numerical_signal
+                    
+                    self.logger.log(f"Reflector: Numerical signal = {numerical_signal:.3f}", Fore.MAGENTA)
+                    return result
+            except (json.JSONDecodeError, ValueError) as e:
+                self.logger.log(f"Reflector: Failed to parse JSON, computing fallback signal", Fore.YELLOW)
+            
+            # Fallback: compute numerical signal from validator output
+            validator_success = validator_output.get("success", False)
+            proof_progress = validator_output.get("proof_progress", 0.0)
+            
+            if validator_success:
+                numerical_signal = 0.5 + 0.5 * proof_progress  # 0.5 to 1.0
+            else:
+                numerical_signal = -0.5 * (1.0 - proof_progress)  # -0.5 to 0.0
+            
+            return {
+                "reflection": f"Validator success: {validator_success}, Progress: {proof_progress}",
+                "quality_score": proof_progress,
+                "correctness_score": 1.0 if validator_success else 0.0,
+                "progress_score": proof_progress,
+                "numerical_signal": numerical_signal,
+                "recommendation": "continue" if validator_success else "prune"
+            }
+            
+        except Exception as e:
+            self.logger.log(f"Error in Reflector: {e}", Fore.RED)
+            return {
+                "reflection": f"Error: {str(e)}",
+                "quality_score": 0.0,
+                "correctness_score": 0.0,
+                "progress_score": 0.0,
+                "numerical_signal": -0.5,
+                "recommendation": "prune",
+                "error": str(e)
+            }
+
+
+class ThreeAgentFeedbackModule(FeedbackInterface):
+    """Three-agent feedback module integrating LEAN Generator, Validator, and Reflector"""
+    
+    def __init__(self, llm_reasoner: 'ParallelLLMReasoner',
+                 lean_server_url: str = "http://localhost:8000",
+                 logger: Optional['DebugLogger'] = None):
+        self.llm_reasoner = llm_reasoner
+        self.logger = logger or DebugLogger()
+        
+        # Initialize three agents
+        self.generator = LEANGeneratorAgent(llm_reasoner, logger)
+        self.validator = ProofValidatorAgent(lean_server_url, logger)
+        self.reflector = ReflectorAgent(llm_reasoner, self.validator, logger)
+    
+    def get_feedback(self, state: 'ReasoningState', action: 'ReasoningAction') -> Tuple['ReasoningState', float, Dict[str, Any]]:
+        """Get feedback through three-agent pipeline: Generator -> Validator -> Reflector"""
+        try:
+            # Step 1: Generator creates LEAN proof sketch/subgoal
+            self.logger.log(f"Three-Agent System: Generator creating LEAN subgoal...", Fore.CYAN)
+            generator_output = self.generator.generate_lean_subgoal(state, action)
+            
+            # Step 2: Validator checks if subgoal is valid
+            lean_code = generator_output.get("lean_code", "")
+            proof_state = self._state_to_lean_proof(state)
+            
+            self.logger.log(f"Three-Agent System: Validator checking subgoal...", Fore.CYAN)
+            validator_output = self.validator.validate_lean_subgoal(lean_code, proof_state)
+            
+            # Step 3: Reflector produces numerical signal
+            self.logger.log(f"Three-Agent System: Reflector analyzing results...", Fore.CYAN)
+            reflection_output = self.reflector.reflect(state, action, generator_output, validator_output)
+            
+            # Extract numerical signal from reflector (this is the key value for MCTS)
+            numerical_signal = reflection_output.get("numerical_signal", 0.0)
+            
+            # Update state based on results
+            next_state = state.copy()
+            next_state.steps.append(action.description)
+            next_state.techniques_used.append(action.action_type)
+            
+            # Add LEAN information to state if available
+            if generator_output.get("lean_code"):
+                lean_info = f"LEAN: {generator_output.get('subgoal_description', '')}"
+                next_state.intermediate_results.append(lean_info)
+            
+            # Compile comprehensive feedback info
+            info = {
+                "feedback_type": "three_agent",
+                "generator_output": generator_output,
+                "validator_output": validator_output,
+                "reflection_output": reflection_output,
+                "numerical_signal": numerical_signal,
+                "quality_score": reflection_output.get("quality_score", 0.0),
+                "correctness_score": reflection_output.get("correctness_score", 0.0),
+                "progress_score": reflection_output.get("progress_score", 0.0),
+                "recommendation": reflection_output.get("recommendation", "continue")
+            }
+            
+            self.logger.log(f"Three-Agent System: Numerical signal = {numerical_signal:.3f}, "
+                          f"Recommendation = {reflection_output.get('recommendation', 'unknown')}", 
+                          Fore.GREEN)
+            
+            return next_state, numerical_signal, info
+            
+        except Exception as e:
+            self.logger.log(f"Error in Three-Agent System: {e}", Fore.RED)
+            # Return neutral feedback on error
+            next_state = state.copy()
+            next_state.steps.append(f"Failed: {action.description}")
+            return next_state, 0.0, {
+                "feedback_type": "three_agent",
+                "error": str(e),
+                "numerical_signal": 0.0
+            }
+    
+    def _state_to_lean_proof(self, state: 'ReasoningState') -> str:
+        """Convert reasoning state to LEAN proof state representation"""
+        proof_parts = []
+        
+        if state.problem.problem_text:
+            proof_parts.append(f"-- Problem: {state.problem.problem_text[:100]}...")
+        
+        if state.steps:
+            proof_parts.append("-- Steps taken:")
+            for i, step in enumerate(state.steps):
+                proof_parts.append(f"-- {i+1}. {step}")
+        
+        if state.current_expression:
+            proof_parts.append(f"-- Current: {state.current_expression}")
+        
+        return "\n".join(proof_parts)
+
+
 class CombinedFeedbackModule(FeedbackInterface):
     """Combined feedback module that integrates both neural and symbolic feedback"""
     
@@ -1350,15 +1709,35 @@ class ParallelMCTSReasoningSolver:
     def _backpropagate(self, node: MCTSNode, value: float):
         """Backpropagation phase: update statistics with feedback integration"""
         while node is not None:
-            # Manish: added feedback-aware backpropagation
+            # Manish: added feedback-aware backpropagation with three-agent system support
             if hasattr(node, 'feedback_reward') and node.feedback_reward != 0:
-                # Use feedback-informed update
                 feedback_info = node.last_feedback_info or {"feedback_type": "unknown"}
-                node.update_with_feedback(value, node.feedback_reward, feedback_info)
                 
-                # Log feedback backpropagation
-                self.logger.log(f"Feedback backprop: {node.feedback_type} reward={node.feedback_reward:.3f}, value={value:.3f}", 
-                              Fore.MAGENTA)
+                # For three-agent system, use the numerical signal from reflector as the value
+                if feedback_info.get("feedback_type") == "three_agent":
+                    # The reflector's numerical_signal is the key value for MCTS updates
+                    numerical_signal = feedback_info.get("numerical_signal", value)
+                    # Combine simulation value with reflector signal for better guidance
+                    # Weight: 70% reflector signal, 30% simulation value
+                    combined_value = 0.7 * numerical_signal + 0.3 * value
+                    
+                    node.update_with_feedback(combined_value, node.feedback_reward, feedback_info)
+                    
+                    recommendation = feedback_info.get("recommendation", "continue")
+                    self.logger.log(f"Three-Agent Backprop: signal={numerical_signal:.3f}, "
+                                  f"combined={combined_value:.3f}, recommendation={recommendation}", 
+                                  Fore.MAGENTA)
+                    
+                    # Apply pruning based on reflector recommendation
+                    if recommendation == "prune" and numerical_signal < -0.3:
+                        # Mark node for reduced exploration
+                        node.visits = max(1, node.visits - 1)  # Reduce visit count to discourage exploration
+                        self.logger.log(f"Pruning node due to poor reflector signal", Fore.YELLOW)
+                else:
+                    # Standard feedback-aware update
+                    node.update_with_feedback(value, node.feedback_reward, feedback_info)
+                    self.logger.log(f"Feedback backprop: {node.feedback_type} reward={node.feedback_reward:.3f}, value={value:.3f}", 
+                                  Fore.MAGENTA)
             else:
                 # Standard update without feedback
                 node.update(value)
@@ -1397,6 +1776,13 @@ class MathReasoningSystemParallel:
                     neural_feedback, symbolic_feedback, 
                     neural_weight, symbolic_weight, self.logger
                 )
+            elif feedback_type == "three_agent":
+                # Three-agent system: Generator -> Validator -> Reflector
+                self.feedback_interface = ThreeAgentFeedbackModule(
+                    self.llm_reasoner, lean_server_url, self.logger
+                )
+                self.logger.log("Three-Agent System initialized: Generator -> Validator -> Reflector", 
+                              Fore.GREEN, important=True)
             else:
                 self.logger.log(f"Unknown feedback type: {feedback_type}, using neural", Fore.YELLOW)
                 self.feedback_interface = NeuralFeedbackModule(self.llm_reasoner, self.logger)
@@ -1465,6 +1851,19 @@ class MathReasoningSystemParallel:
                 'has_diagram': math_problem.has_diagram
             }
             
+            # Extract predicted answer from solution (similar to ground truth extraction)
+            predicted_solution = result.get('solution', '')
+            predicted_answer = self._extract_answer_from_solution(predicted_solution)
+            
+            # Re-evaluate correctness by comparing extracted answers (more reliable than LLM evaluation)
+            is_correct_by_answer = False
+            if predicted_answer and math_problem.answer:
+                is_correct_by_answer = self._compare_answers(predicted_answer, math_problem.answer)
+            
+            # Use answer comparison if available, otherwise fall back to LLM's is_correct
+            # Answer comparison is more reliable for final evaluation
+            is_correct = is_correct_by_answer if predicted_answer else result.get('is_correct', False)
+            
             # Create statistics record with feedback information
             stats_record = {
                 'timestamp': datetime.datetime.now().isoformat(),
@@ -1477,10 +1876,11 @@ class MathReasoningSystemParallel:
                 'reasoning_steps': result.get('reasoning_steps', []),
                 'num_reasoning_steps': len(result.get('reasoning_steps', [])),
                 'techniques_used': result.get('techniques_used', []),
-                'predicted_answer': result.get('solution'),
-                'groundtruth_answer': math_problem.answer,  # This now contains the extracted answer
+                'predicted_answer': predicted_answer,  # Extracted final answer, not full solution
+                'predicted_solution': predicted_solution,  # Full solution text for reference
+                'groundtruth_answer': math_problem.answer,  # Extracted answer
                 'groundtruth_solution': math_problem.solution[:500] + "..." if len(math_problem.solution) > 500 else math_problem.solution,
-                'is_correct': result.get('is_correct', False),
+                'is_correct': is_correct,
                 'confidence': result.get('confidence', 0),
                 'value': result.get('value', 0),
                 'has_diagram': math_problem.has_diagram,
@@ -1528,6 +1928,115 @@ class MathReasoningSystemParallel:
                 "error": str(e),
                 "time_taken": time.time() - start_time
             }
+    
+    def _extract_answer_from_solution(self, solution_text: str) -> Optional[str]:
+        """Extract the final answer from solution text (similar to MathProblem extraction)"""
+        if not solution_text:
+            return None
+        
+        answer = ""
+        
+        # Method 1: Look for \boxed{...} without regex
+        if '\\boxed{' in solution_text:
+            start = solution_text.find('\\boxed{')
+            if start != -1:
+                start += 7  # length of '\boxed{'
+                # Find matching closing brace
+                brace_count = 1
+                end = start
+                while end < len(solution_text) and brace_count > 0:
+                    if solution_text[end] == '{':
+                        brace_count += 1
+                    elif solution_text[end] == '}':
+                        brace_count -= 1
+                    end += 1
+                if brace_count == 0:
+                    answer = solution_text[start:end-1].strip()
+        
+        # Method 2: If no boxed answer, look for common patterns
+        if not answer:
+            # Look for "answer is" or "equals" patterns
+            lower_solution = solution_text.lower()
+            for pattern in ['answer is', 'answer:', 'equals', '=']:
+                idx = lower_solution.rfind(pattern)  # Look for last occurrence
+                if idx != -1:
+                    # Extract the rest of the line
+                    start = idx + len(pattern)
+                    end = solution_text.find('\n', start)
+                    if end == -1:
+                        end = len(solution_text)
+                    potential_answer = solution_text[start:end].strip()
+                    # Clean up common formatting
+                    potential_answer = potential_answer.strip('$. ')
+                    if potential_answer and len(potential_answer) < 100:  # Reasonable answer length
+                        answer = potential_answer
+                        break
+        
+        # Method 3: If solution is short and looks like an answer, use it
+        if not answer and len(solution_text.strip()) < 50:
+            answer = solution_text.strip()
+        
+        return answer if answer else None
+    
+    def _compare_answers(self, predicted_answer: Optional[str], groundtruth_answer: str) -> bool:
+        """Compare predicted answer with ground truth answer"""
+        if not predicted_answer or not groundtruth_answer:
+            return False
+        
+        # Normalize both answers for comparison
+        pred_norm = self._normalize_answer(predicted_answer)
+        gt_norm = self._normalize_answer(groundtruth_answer)
+        
+        # Exact match
+        if pred_norm == gt_norm:
+            return True
+        
+        # Check if predicted answer contains ground truth (for descriptive answers)
+        if gt_norm in pred_norm:
+            return True
+        
+        # Check if ground truth contains predicted answer (for partial answers)
+        if pred_norm in gt_norm:
+            return True
+        
+        # Try numerical comparison if both are numeric
+        try:
+            pred_num = float(pred_norm)
+            gt_num = float(gt_norm)
+            return abs(pred_num - gt_num) < 1e-6
+        except ValueError:
+            pass
+        
+        return False
+    
+    def _normalize_answer(self, answer: str) -> str:
+        """Normalize answer string for comparison"""
+        if not answer:
+            return ""
+        
+        # Remove common LaTeX formatting
+        normalized = answer.strip()
+        
+        # Remove dollar signs
+        normalized = normalized.replace('$', '')
+        
+        # Remove common LaTeX commands
+        normalized = normalized.replace('\\left(', '(')
+        normalized = normalized.replace('\\right)', ')')
+        normalized = normalized.replace('\\frac{', '')
+        normalized = normalized.replace('}{', '/')
+        normalized = normalized.replace('}', '')
+        normalized = normalized.replace('\\text{', '')
+        normalized = normalized.replace('\\sqrt{', 'sqrt(')
+        normalized = normalized.replace('\\pi', 'pi')
+        
+        # Remove extra whitespace
+        normalized = ' '.join(normalized.split())
+        
+        # Lowercase for case-insensitive comparison
+        normalized = normalized.lower()
+        
+        return normalized
     
     def evaluate_all_subjects_and_levels(self, dataset_name: str = "HuggingFaceH4/MATH-500",
                                        split: str = "test",

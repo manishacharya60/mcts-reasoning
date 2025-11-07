@@ -1,0 +1,92 @@
+{
+  "experiment_info": {
+    "timestamp": "20251019_183812",
+    "total_tests": 3,
+    "experiment_type": "simple_weight_testing"
+  },
+  "results": [
+    {
+      "test_name": "Neural Heavy",
+      "neural_weight": 0.7,
+      "symbolic_weight": 0.3,
+      "accuracy": 0.7428571428571429,
+      "correct": 26,
+      "total": 35,
+      "time_taken": 3544.8556632995605,
+      "feedback_calls": 542,
+      "timestamp": "2025-10-19T16:36:13.215706"
+    },
+    {
+      "test_name": "Balanced",
+      "neural_weight": 0.5,
+      "symbolic_weight": 0.5,
+      "accuracy": 0.7142857142857143,
+      "correct": 25,
+      "total": 35,
+      "time_taken": 3332.25923871994,
+      "feedback_calls": 479,
+      "timestamp": "2025-10-19T17:31:45.478552"
+    },
+    {
+      "test_name": "LEAN Heavy",
+      "neural_weight": 0.3,
+      "symbolic_weight": 0.7,
+      "accuracy": 0.7714285714285715,
+      "correct": 27,
+      "total": 35,
+      "time_taken": 3987.2274193763733,
+      "feedback_calls": 562,
+      "timestamp": "2025-10-19T18:38:12.709187"
+    }
+  ],
+  "best_configuration": {
+    "test_name": "LEAN Heavy",
+    "neural_weight": 0.3,
+    "symbolic_weight": 0.7,
+    "accuracy": 0.7714285714285715,
+    "correct": 27,
+    "total": 35,
+    "time_taken": 3987.2274193763733,
+    "feedback_calls": 562,
+    "timestamp": "2025-10-19T18:38:12.709187"
+  },
+  "analysis": {
+    "sorted_by_accuracy": [
+      {
+        "test_name": "LEAN Heavy",
+        "neural_weight": 0.3,
+        "symbolic_weight": 0.7,
+        "accuracy": 0.7714285714285715,
+        "correct": 27,
+        "total": 35,
+        "time_taken": 3987.2274193763733,
+        "feedback_calls": 562,
+        "timestamp": "2025-10-19T18:38:12.709187"
+      },
+      {
+        "test_name": "Neural Heavy",
+        "neural_weight": 0.7,
+        "symbolic_weight": 0.3,
+        "accuracy": 0.7428571428571429,
+        "correct": 26,
+        "total": 35,
+        "time_taken": 3544.8556632995605,
+        "feedback_calls": 542,
+        "timestamp": "2025-10-19T16:36:13.215706"
+      },
+      {
+        "test_name": "Balanced",
+        "neural_weight": 0.5,
+        "symbolic_weight": 0.5,
+        "accuracy": 0.7142857142857143,
+        "correct": 25,
+        "total": 35,
+        "time_taken": 3332.25923871994,
+        "feedback_calls": 479,
+        "timestamp": "2025-10-19T17:31:45.478552"
+      }
+    ],
+    "best_accuracy": 0.7714285714285715,
+    "best_weights": "0.3/0.7"
+  }
+}

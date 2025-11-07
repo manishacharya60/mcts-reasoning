@@ -1,0 +1,49 @@
+{
+  "evaluation_date": "2025-11-04T11:31:10.843237",
+  "total_problems": 1,
+  "model_config": {
+    "model_name": "gpt-4o-mini",
+    "temperature": 0.7,
+    "max_iterations": 10,
+    "exploration_constant": 1.414,
+    "max_depth": 15,
+    "parallel_expansions": 2,
+    "max_workers": 2
+  },
+  "problems": [
+    {
+      "timestamp": "2025-11-04T11:31:10.843183",
+      "dataset_index": null,
+      "problem_text": "Find the value of x if 2x + 5 = 15",
+      "subject": "Algebra",
+      "level": 1,
+      "time_taken": 49.17975187301636,
+      "iterations": 4,
+      "reasoning_steps": [
+        "Rearrange the equation to express x in terms of constants by first subtracting 5 and then dividing by 2."
+      ],
+      "num_reasoning_steps": 1,
+      "techniques_used": [
+        "isolate_variable"
+      ],
+      "predicted_answer": "5",
+      "groundtruth_answer": "5",
+      "groundtruth_solution": "Subtract 5 from both sides: 2x = 10. Divide by 2: x = 5",
+      "is_correct": true,
+      "confidence": 1,
+      "value": 1.0,
+      "has_diagram": false,
+      "mcts_stats": {
+        "expansions": 3,
+        "simulations": 4,
+        "backpropagations": 6
+      },
+      "feedback_enabled": true,
+      "feedback_stats": {
+        "feedback_three_agent": 3,
+        "total_feedback_calls": 3
+      },
+      "feedback_type": "ThreeAgentFeedbackModule"
+    }
+  ]
+}

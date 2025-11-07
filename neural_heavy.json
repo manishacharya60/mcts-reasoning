@@ -1,0 +1,11 @@
+{
+  "test_name": "Neural Heavy",
+  "neural_weight": 0.7,
+  "symbolic_weight": 0.3,
+  "accuracy": 0.7428571428571429,
+  "correct": 26,
+  "total": 35,
+  "time_taken": 3544.8556632995605,
+  "feedback_calls": 542,
+  "timestamp": "2025-10-19T16:36:13.215706"
+}

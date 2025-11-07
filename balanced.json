@@ -1,0 +1,12 @@
+{
+  "test_name": "Balanced",
+  "neural_weight": 0.5,
+  "symbolic_weight": 0.5,
+  "accuracy": 0.6571428571428571,
+  "correct": 23,
+  "total": 35,
+  "time_taken": 4330.862941026688,
+  "feedback_calls": 638,
+  "results_file": "fixed_problems_evaluation_20251019_173322.json",
+  "timestamp": "2025-10-19T17:33:22.617754"
+}
